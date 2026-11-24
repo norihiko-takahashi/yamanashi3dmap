@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="three.js で描いた山梨県の立体地図。高低差を強調して表示できます。" />
+    <title>山梨県 3D マップ</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M4 54 26 18l9 14 7-10 18 32z' fill='%232f7d4f'/%3E%3Cpath d='M26 18l5 8-5 3-5-3z' fill='%23fff'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene" aria-label="山梨県の立体地図"></canvas>
+      <div id="labels"></div>
+
+      <div id="loading" role="status">
+        <div class="spinner"></div>
+        <p id="loading-text">地形データを読み込み中…</p>
+      </div>
+
+      <button id="panel-toggle" type="button" aria-expanded="true" aria-controls="panel">設定</button>
+
+      <aside id="panel">
+        <header class="panel-head">
+          <h1>山梨県 3D マップ</h1>
+          <p class="hint">ドラッグで回転、右ドラッグ（2本指）で移動、ホイール（ピンチ）でズーム。地形をクリックすると標高を表示します。</p>
+        </header>
+
+        <section>
+          <h2>名所へジャンプ</h2>
+          <div id="spots" class="spots"></div>
+        </section>
+
+        <section>
+          <h2>表示</h2>
+          <label class="slider">
+            <span>高さの強調 <output id="exag-value">2.0</output> 倍</span>
+            <input id="exag" type="range" min="1" max="5" step="0.1" value="2" />
+          </label>
+          <label class="slider">
+            <span>太陽の方位 <output id="sun-az-value">135</output>°</span>
+            <input id="sun-az" type="range" min="0" max="360" step="1" value="135" />
+          </label>
+          <label class="slider">
+            <span>太陽の高さ <output id="sun-alt-value">40</output>°</span>
+            <input id="sun-alt" type="range" min="3" max="90" step="1" value="40" />
+          </label>
+          <label class="check"><input id="auto-rotate" type="checkbox" /> 自動回転</label>
+        </section>
+
+        <section>
+          <h2>レイヤー</h2>
+          <label class="check"><input data-layer="boundaries" type="checkbox" checked /> 県境・市町村界</label>
+          <label class="check"><input data-layer="rivers" type="checkbox" checked /> 河川</label>
+          <label class="check"><input data-layer="lakes" type="checkbox" checked /> 湖</label>
+          <label class="check"><input data-layer="outside" type="checkbox" checked /> 県外を暗く表示</label>
+          <label class="check"><input data-labels="municipality" type="checkbox" checked /> 市町村名</label>
+          <label class="check"><input data-labels="mountain" type="checkbox" checked /> 山名</label>
+          <label class="check"><input data-labels="lake" type="checkbox" checked /> 湖名</label>
+        </section>
+
+        <section id="legend-section">
+          <h2>標高</h2>
+          <div id="legend" class="legend"></div>
+        </section>
+
+        <footer id="attribution" class="attribution"></footer>
+      </aside>
+
+      <div id="info" class="info" hidden>
+        <button id="info-close" type="button" aria-label="閉じる">×</button>
+        <div id="info-body"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
