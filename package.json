@@ -1,0 +1,21 @@
+{
+  "name": "yamanashi3dmap",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "data": "node scripts/build-data.mjs",
+    "data:gsi": "node scripts/build-data.mjs --source gsi",
+    "data:terrarium": "node scripts/build-data.mjs --source terrarium"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "pngjs": "^7.0.0",
+    "vite": "^6.3.5"
+  }
+}
