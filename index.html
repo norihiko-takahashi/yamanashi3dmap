@@ -53,6 +53,7 @@
           <label class="check"><input data-layer="boundaries" type="checkbox" checked /> 県境・市町村界</label>
           <label class="check"><input data-layer="rivers" type="checkbox" checked /> 河川</label>
           <label class="check"><input data-layer="lakes" type="checkbox" checked /> 湖</label>
+          <label class="check with-note"><input data-layer="fujiView" type="checkbox" /> <span class="swatch fuji" aria-hidden="true"></span>富士山が見える場所<small class="note">（見えない場所を暗く表示）</small></label>
           <label class="check"><input data-layer="outside" type="checkbox" checked /> 県外を暗く表示</label>
           <label class="check"><input data-labels="municipality" type="checkbox" checked /> 市町村名</label>
           <label class="check"><input data-labels="mountain" type="checkbox" checked /> 山名</label>
@@ -63,7 +64,7 @@
           <h2>鉄道</h2>
           <table class="rail-table">
             <thead>
-              <tr><th scope="col">路線</th><th scope="col">線路</th><th scope="col">電車</th></tr>
+              <tr><th scope="col">路線</th><th scope="col">線路</th><th scope="col">電車</th><th scope="col">運転席</th></tr>
             </thead>
             <tbody id="rail-list"></tbody>
           </table>
@@ -81,6 +82,13 @@
 
         <footer id="attribution" class="attribution"></footer>
       </aside>
+
+      <div id="tunnel" class="tunnel" hidden aria-hidden="true"><span>トンネル</span></div>
+      <div id="cab" class="cab" hidden role="status">
+        <div class="cab-line"><span id="cab-swatch" class="rail-swatch"></span><span><span id="cab-line"></span> の運転席<small id="cab-status" class="cab-status"></small></span></div>
+        <div class="cab-speed"><output id="cab-speed">0</output><small>km/h</small></div>
+        <button id="cab-exit" type="button">降りる</button>
+      </div>
 
       <div id="info" class="info" hidden>
         <button id="info-close" type="button" aria-label="閉じる">×</button>

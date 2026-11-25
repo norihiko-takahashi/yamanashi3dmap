@@ -6,6 +6,7 @@
 // 出力 (public/data/):
 //   dem.bin               Uint16 リトルエンディアン、標高(m) × 10。北西から行優先
 //   water.png             湖・水面マスク (グレースケール, 255 = 水面)
+//   fuji_view.png         富士山の山頂が見える場所 (グレースケール, 255 = 見える)
 //   municipalities.json   市町村界 (GeoJSON, 国土数値情報 N03 を簡略化)
 //   rivers.json           主要河川 (GeoJSON, 標高データから流路を推定)
 //   meta.json             グリッド範囲・出典などのメタデータ
@@ -359,6 +360,89 @@ function detectWater({ cols, rows, heights }, report = []) {
   return mask;
 }
 
+// ---------------------------------------------------------------- 富士山が見える場所
+// 山頂付近の点から全方位へ視線を伸ばし、途中の地形に遮られずに届くセルを「見える」とする。
+// 見通しは両端で対称なので、各地点 (目の高さ 1.6 m) から山頂付近が見えるかと同じになる。
+// 山頂には火口があり、最高点 (剣ヶ峰) は南西側の縁にあるため、北東側からは手前の
+// 火口の縁しか見えない。そこで火口の縁を囲む複数の点を対象にし、どれか 1 点でも見えれば
+// 「富士山 (の山頂付近) が見える」とする。地球の丸みと大気による光の屈折 (屈折係数 0.13) を考慮する。
+const VIEW = {
+  eyeHeight: 1.6, // 観測者の目の高さ (m)
+  earthRadius: 6371000, // m
+  refraction: 0.13,
+  rays: 12000, // 視線の本数 (最も遠い範囲でもセルの間隔とほぼ同じ細かさになる数)
+  stepKm: 0.035, // 視線に沿って調べる間隔
+  rimRadiusKm: 1.2, // 最高点からこの範囲で火口の縁の点を選ぶ
+  rimDrop: 150, // 最高点からこの高さ (m) 以内の点だけを山頂付近とみなす
+  rimSectors: 12, // 縁の点を選ぶ方位の数
+};
+
+// 山頂付近 (火口の縁) の点を方位ごとに 1 つずつ選ぶ
+function summitRimPoints({ cols, rows, heights }, summitIndex) {
+  const cellX = DLON * 111.32 * Math.cos((35.57 * Math.PI) / 180);
+  const cellZ = DLAT * 110.95;
+  const sc = summitIndex % cols, sr = (summitIndex / cols) | 0;
+  const top = heights[summitIndex];
+  const R = Math.ceil(VIEW.rimRadiusKm / cellZ);
+  // 山頂付近の点の重心 (おおよその火口の中心) を基準に方位を分ける
+  const near = [];
+  for (let r = sr - R; r <= sr + R; r++)
+    for (let c = sc - R; c <= sc + R; c++) {
+      const i = r * cols + c;
+      if (Math.hypot((c - sc) * cellX, (r - sr) * cellZ) <= VIEW.rimRadiusKm && heights[i] >= top - VIEW.rimDrop) near.push(i);
+    }
+  const cx = near.reduce((s, i) => s + (i % cols), 0) / near.length;
+  const cz = near.reduce((s, i) => s + ((i / cols) | 0), 0) / near.length;
+  const best = new Map();
+  for (const i of near) {
+    const ang = Math.atan2(((i / cols) | 0) - cz, (i % cols) - cx);
+    const sec = Math.floor(((ang + Math.PI) / (2 * Math.PI)) * VIEW.rimSectors) % VIEW.rimSectors;
+    if (!best.has(sec) || heights[i] > heights[best.get(sec)]) best.set(sec, i);
+  }
+  return [...best.values()];
+}
+
+function fujiViewshed(dem, summitIndex) {
+  const vis = new Uint8Array(dem.cols * dem.rows);
+  const points = summitRimPoints(dem, summitIndex);
+  for (const p of points) viewshedFrom(dem, p, vis);
+  return { vis, points };
+}
+
+function viewshedFrom({ cols, rows, heights }, summitIndex, vis) {
+  const cellX = DLON * 111.32 * Math.cos((35.57 * Math.PI) / 180); // km
+  const cellZ = DLAT * 110.95;
+  const sc = summitIndex % cols, sr = (summitIndex / cols) | 0;
+  const h0 = heights[summitIndex];
+  const sample = (c, r) => {
+    const c0 = Math.floor(c), r0 = Math.floor(r);
+    if (c0 < 0 || r0 < 0 || c0 >= cols - 1 || r0 >= rows - 1) return NaN;
+    const tx = c - c0, ty = r - r0, i = r0 * cols + c0;
+    return (
+      heights[i] * (1 - tx) * (1 - ty) + heights[i + 1] * tx * (1 - ty) +
+      heights[i + cols] * (1 - tx) * ty + heights[i + cols + 1] * tx * ty
+    );
+  };
+  vis[summitIndex] = 255;
+  const k = (1 - VIEW.refraction) / (2 * VIEW.earthRadius);
+  for (let a = 0; a < VIEW.rays; a++) {
+    const th = (a / VIEW.rays) * Math.PI * 2;
+    const dx = Math.cos(th), dz = Math.sin(th);
+    let maxSlope = -Infinity;
+    for (let d = VIEW.stepKm; ; d += VIEW.stepKm) {
+      const c = sc + (dx * d) / cellX, r = sr + (dz * d) / cellZ;
+      const h = sample(c, r);
+      if (Number.isNaN(h)) break;
+      const dm = d * 1000;
+      const drop = dm * dm * k; // 地球の丸みで下がる高さ (m)
+      const ground = (h - drop - h0) / dm; // 山頂から見た地表の傾き
+      const eye = (h + VIEW.eyeHeight - drop - h0) / dm;
+      if (eye >= maxSlope) vis[Math.round(r) * cols + Math.round(c)] = 255;
+      if (ground > maxSlope) maxSlope = ground;
+    }
+  }
+}
+
 // ---------------------------------------------------------------- 河川 (流路の推定)
 class MinHeap {
   constructor() { this.k = []; this.v = []; }
@@ -635,6 +719,23 @@ async function main() {
   const png = new PNG({ width: dem.cols, height: dem.rows, colorType: 0, inputColorType: 0, bitDepth: 8 });
   png.data = Buffer.from(water);
 
+  // 富士山の山頂 (グリッド内の最高点) が見える場所
+  const { vis: view, points: rimPoints } = fujiViewshed(dem, maxI);
+  console.log(`富士山の山頂付近の点: ${rimPoints.length} 点 (標高 ${Math.min(...rimPoints.map((i) => dem.heights[i])).toFixed(0)}〜${maxH.toFixed(0)} m)`);
+  const viewPng = new PNG({ width: dem.cols, height: dem.rows, colorType: 0, inputColorType: 0, bitDepth: 8 });
+  viewPng.data = Buffer.from(view);
+  {
+    let all = 0, pref = 0, prefAll = 0;
+    const inPref = (i) => {
+      const lon = BBOX.west + (i % dem.cols) * DLON, lat = BBOX.north - Math.floor(i / dem.cols) * DLAT;
+      return municipalities.features.some((f) => f.geometry.coordinates.some((poly) => pointInRing([lon, lat], poly[0])));
+    };
+    // 県内の割合は 10 セルおきの間引きで見積もる (全セルの判定は時間がかかるため)
+    for (let i = 0; i < view.length; i++) if (view[i]) all++;
+    for (let i = 0; i < view.length; i += 10) if (inPref(i)) { prefAll++; if (view[i]) pref++; }
+    console.log(`富士山が見える場所: グリッド全体の ${((all / view.length) * 100).toFixed(1)}%、山梨県内の約 ${((pref / prefAll) * 100).toFixed(1)}%`);
+  }
+
   const meta = {
     generated: new Date().toISOString(),
     source: argSource,
@@ -658,6 +759,7 @@ async function main() {
         url: 'https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-v3_1.html',
       },
       { text: '河川・湖: 上記の標高データから推定' },
+      { text: '富士山が見える場所: 上記の標高データから計算 (目の高さ 1.6 m、地球の丸みと大気の屈折を考慮、建物や樹木は考慮しない)' },
     ],
   };
 
@@ -667,6 +769,7 @@ async function main() {
   await fs.mkdir(tmp, { recursive: true });
   await fs.writeFile(path.join(tmp, 'dem.bin'), Buffer.from(bin.buffer));
   await fs.writeFile(path.join(tmp, 'water.png'), PNG.sync.write(png, { colorType: 0, inputColorType: 0 }));
+  await fs.writeFile(path.join(tmp, 'fuji_view.png'), PNG.sync.write(viewPng, { colorType: 0, inputColorType: 0 }));
   await fs.writeFile(path.join(tmp, 'municipalities.json'), JSON.stringify(municipalities));
   await fs.writeFile(path.join(tmp, 'rivers.json'), JSON.stringify(rivers));
   await fs.writeFile(path.join(tmp, 'meta.json'), JSON.stringify(meta, null, 2));
