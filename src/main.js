@@ -254,6 +254,7 @@ async function main() {
     downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
   });
   canvas.addEventListener('pointerup', (e) => {
+    if (cab) return; // 乗車中のクリック・ドラッグは見回しに使う
     if (!downAt || !e.isPrimary) return;
     const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
     const quick = performance.now() - downAt.t < 500;
@@ -421,7 +422,19 @@ async function main() {
   const cabEye = new THREE.Vector3();
   const cabTarget = new THREE.Vector3();
   let cabHudAt = 0;
+  // 乗車中の見回し: 進行方向からの向き (度) と視野角
+  const CAB_FOV = { initial: 60, min: 15, max: 90 };
+  const look = { yaw: 0, pitch: 0, fov: CAB_FOV.initial };
+  const resetLook = () => {
+    look.yaw = 0;
+    look.pitch = 0;
+    look.fov = CAB_FOV.initial;
+  };
+  const setCabFov = (fov) => {
+    look.fov = THREE.MathUtils.clamp(fov, CAB_FOV.min, CAB_FOV.max);
+  };
   function enterCab(line) {
+    resetLook();
     railways.enterCab(line.id, controls.target);
     cab = { line };
     flight = null;
@@ -451,6 +464,85 @@ async function main() {
     flyToPose({ pos, target: cabEye.clone() });
   }
   $('cab-exit').addEventListener('click', exitCab);
+
+  // ドラッグで 360 度見回す (スマホは 1 本指)。2 本指はピンチでズーム
+  const pointers = new Map();
+  let pinchDist = 0;
+  let lastTap = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!cab) return;
+    // ダブルタップ (タッチ) で正面に戻す。マウスは dblclick で扱う
+    if (e.pointerType === 'touch') {
+      const now = performance.now();
+      if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+        resetLook();
+        lastTap = null;
+      } else lastTap = { t: now, x: e.clientX, y: e.clientY };
+    }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    canvas.setPointerCapture(e.pointerId);
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+    }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!cab || !pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    const cur = { x: e.clientX, y: e.clientY };
+    pointers.set(e.pointerId, cur);
+    if (pointers.size === 1) {
+      // 画面の高さ 1 枚分のドラッグで、視野角と同じ角度だけ回る (つかんで動かす感覚)
+      const degPerPx = look.fov / canvas.clientHeight;
+      look.yaw = (look.yaw - (cur.x - prev.x) * degPerPx + 540) % 360 - 180;
+      look.pitch = THREE.MathUtils.clamp(look.pitch + (cur.y - prev.y) * degPerPx, -80, 80);
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinchDist > 0) setCabFov(look.fov * (pinchDist / d));
+      pinchDist = d;
+    }
+  });
+  const endPointer = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinchDist = 0;
+  };
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  // ダブルクリック (ダブルタップ) で正面に戻す
+  canvas.addEventListener('dblclick', () => {
+    if (cab) resetLook();
+  });
+  // ホイール: ズーム (望遠・広角)。Ctrl+ホイール (タッチパッドのピンチ) もズーム。Shift+ホイール: 電車の速さ
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      if (!cab) return;
+      e.preventDefault();
+      const delta = e.deltaY || e.deltaX; // Shift+ホイールは横スクロールとして届くブラウザがある
+      if (e.shiftKey) {
+        const input = $('train-speed');
+        const v = THREE.MathUtils.clamp(parseFloat(input.value) * Math.exp(-delta * 0.002), parseFloat(input.min), parseFloat(input.max));
+        input.value = v.toFixed(1);
+        input.dispatchEvent(new Event('input'));
+        showCabHint(`電車の速さ ${parseFloat(input.value).toFixed(1)} 倍`);
+      } else {
+        setCabFov(look.fov * Math.exp(delta * (e.ctrlKey ? 0.01 : 0.001)));
+      }
+    },
+    { passive: false },
+  );
+  let hintTimer = 0;
+  function showCabHint(text) {
+    const el = $('cab-hint');
+    el.textContent = text;
+    el.classList.add('flash');
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => {
+      el.classList.remove('flash');
+      el.textContent = 'ドラッグで見回す・ホイールでズーム・Shift+ホイールで速さ・ダブルクリックで正面';
+    }, 1500);
+  }
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') exitCab();
   });
@@ -535,7 +627,16 @@ async function main() {
       railways.update(dt, camera, renderer.domElement.clientHeight);
       const info = railways.cabView(cabEye, cabTarget);
       camera.position.copy(cabEye);
-      camera.lookAt(cabTarget);
+      // 進行方向を基準に、見回しの向きを足す
+      const f = cabTarget.clone().sub(cabEye).normalize();
+      const heading = Math.atan2(f.x, -f.z) + THREE.MathUtils.degToRad(look.yaw);
+      const pitch = THREE.MathUtils.clamp(Math.asin(THREE.MathUtils.clamp(f.y, -1, 1)) + THREE.MathUtils.degToRad(look.pitch), -1.45, 1.45);
+      const dir = new THREE.Vector3(Math.sin(heading) * Math.cos(pitch), Math.sin(pitch), -Math.cos(heading) * Math.cos(pitch));
+      camera.lookAt(cabEye.clone().add(dir));
+      if (Math.abs(camera.fov - look.fov) > 0.01) {
+        camera.fov = look.fov;
+        camera.updateProjectionMatrix();
+      }
       if ($('tunnel').hidden === info.tunnel) $('tunnel').hidden = !info.tunnel;
       updateNear(0.01);
       if (now - cabHudAt > 250) {
