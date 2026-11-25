@@ -178,7 +178,26 @@ async function buildDem() {
 
 // ---------------------------------------------------------------- 湖 (平坦な水面の検出)
 // 標高データでは湖面がほぼ一定の高さになるため、広く平坦な連結領域を湖とみなす。
-function detectWater({ cols, rows, heights }) {
+function detectWater({ cols, rows, heights }, report = []) {
+  const describe = (cells, method, name = '') => {
+    let sx = 0, sy = 0, sh = 0, sh2 = 0;
+    for (const i of cells) {
+      const r = (i / cols) | 0, c = i - r * cols;
+      sx += c; sy += r; sh += heights[i]; sh2 += heights[i] ** 2;
+    }
+    const n = cells.length;
+    const mean = sh / n;
+    report.push({
+      method,
+      name,
+      cells: n,
+      km2: n * (DLAT * 110.95) * (DLON * 111.32 * Math.cos((35.57 * Math.PI) / 180)),
+      lon: BBOX.west + (sx / n) * DLON,
+      lat: BBOX.north - (sy / n) * DLAT,
+      height: mean,
+      sd: Math.sqrt(Math.max(0, sh2 / n - mean * mean)),
+    });
+  };
   const flat = new Uint8Array(cols * rows);
   for (let r = 1; r < rows - 1; r++) {
     for (let c = 1; c < cols - 1; c++) {
@@ -218,6 +237,7 @@ function detectWater({ cols, rows, heights }) {
       }
     }
     if (comp.length >= MIN_CELLS) {
+      describe(comp, '平坦判定');
       for (const i of comp) {
         mask[i] = 255;
         // 縁 (平坦判定から外れた湖岸のセル) も含める
@@ -275,6 +295,7 @@ function detectWater({ cols, rows, heights }) {
       continue;
     }
     for (const i of filled) mask[i] = 255;
+    describe(filled, '代表点から塗り広げ', lake.name);
     console.log(`  ${lake.name}: 湖面 ${level.toFixed(1)} m, ${(filled.length * 0.0046).toFixed(1)} km²`);
   }
   return mask;
@@ -508,6 +529,33 @@ async function buildMunicipalities() {
   return { type: 'FeatureCollection', features };
 }
 
+// 湖として判定した領域の一覧 (場所・面積・判定方法) を表示する。
+// GitHub Actions ではジョブの概要 (GITHUB_STEP_SUMMARY) にも書き出す。
+async function printWaterReport(report, municipalities) {
+  const muniOf = (lon, lat) => {
+    for (const f of municipalities.features)
+      for (const poly of f.geometry.coordinates) if (pointInRing([lon, lat], poly[0])) return f.properties.name;
+    return '県外';
+  };
+  const rows = [...report].sort((a, b) => b.cells - a.cells);
+  const lines = rows.map(
+    (w) =>
+      `| ${w.method} | ${w.name || '-'} | ${muniOf(w.lon, w.lat)} | ${w.lon.toFixed(3)}, ${w.lat.toFixed(3)} | ` +
+      `${w.km2.toFixed(2)} | ${w.height.toFixed(1)} | ${w.sd.toFixed(2)} |`,
+  );
+  const table = [
+    `湖として判定した領域: ${rows.length} か所`,
+    '',
+    '| 判定方法 | 湖名 | 場所 | 経度, 緯度 | 面積 (km²) | 平均標高 (m) | 標高のばらつき (m) |',
+    '| --- | --- | --- | --- | ---: | ---: | ---: |',
+    ...lines,
+  ].join('\n');
+  console.log(table);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    await fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `### 湖の判定結果 (${source.name})\n\n${table}\n\n`);
+  }
+}
+
 // ---------------------------------------------------------------- メイン
 async function main() {
   const t0 = Date.now();
@@ -515,7 +563,8 @@ async function main() {
   const municipalities = await buildMunicipalities();
   console.log(`グリッド ${dem.cols} × ${dem.rows}`);
 
-  const water = detectWater(dem);
+  const waterReport = [];
+  const water = detectWater(dem, waterReport);
   const rivers = buildRivers(dem);
 
   let maxH = 0, maxI = 0;
@@ -568,6 +617,7 @@ async function main() {
   await fs.rm(tmp, { recursive: true, force: true });
 
   const waterCells = water.reduce((s, v) => s + (v ? 1 : 0), 0);
+  await printWaterReport(waterReport, municipalities);
   console.log(
     `完了 (${((Date.now() - t0) / 1000).toFixed(1)} 秒): 最高点 ${meta.maxHeight} m @ ${meta.maxHeightAt}, ` +
       `河川 ${rivers.features.length} 本, 水面 ${waterCells} セル`,

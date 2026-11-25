@@ -1,0 +1,28 @@
+name: Check data and build
+
+# PR ごとに国土地理院の標高タイルからデータを作り、ビルドできることを確認する。
+# 湖の判定結果などはジョブの概要 (Summary) に表として出る。公開 (デプロイ) はしない。
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build terrain data from GSI tiles
+        run: npm run data:gsi
+
+      - run: npm run build
