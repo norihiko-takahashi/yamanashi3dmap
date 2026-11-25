@@ -562,8 +562,10 @@ async function main() {
   await fs.writeFile(path.join(tmp, 'municipalities.json'), JSON.stringify(municipalities));
   await fs.writeFile(path.join(tmp, 'rivers.json'), JSON.stringify(rivers));
   await fs.writeFile(path.join(tmp, 'meta.json'), JSON.stringify(meta, null, 2));
-  await fs.rm(OUT_DIR, { recursive: true, force: true });
-  await fs.rename(tmp, OUT_DIR);
+  // このスクリプトが作るファイルだけを置き換える (railways.json など他のデータは残す)
+  await fs.mkdir(OUT_DIR, { recursive: true });
+  for (const name of await fs.readdir(tmp)) await fs.rename(path.join(tmp, name), path.join(OUT_DIR, name));
+  await fs.rm(tmp, { recursive: true, force: true });
 
   const waterCells = water.reduce((s, v) => s + (v ? 1 : 0), 0);
   console.log(

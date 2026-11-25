@@ -28,6 +28,7 @@ export class Terrain {
     this.width = (cols - 1) * this.cellX;
     this.depth = (rows - 1) * this.cellZ;
 
+    this.step = step;
     this.geometry = this.#buildGeometry(step);
     this.skirtGeometry = this.#buildSkirt(step);
   }
@@ -56,6 +57,25 @@ export class Terrain {
       heights[i + cols] * (1 - tx) * ty +
       heights[i + cols + 1] * tx * ty
     );
+  }
+
+  // 描画しているメッシュの三角形と同じ補間で求めた地表の高さ (m)。
+  // 線路や電車を地表にぴったり載せるために使う。
+  surfaceHeightAtXZ(x, z) {
+    const { cols, rows, heights, step } = this;
+    const gc = Math.min(cols - 1, Math.max(0, (x + this.width / 2) / this.cellX)) / step;
+    const gr = Math.min(rows - 1, Math.max(0, (z + this.depth / 2) / this.cellZ)) / step;
+    const nc = Math.floor((cols - 1) / step);
+    const nr = Math.floor((rows - 1) / step);
+    const i = Math.min(nc - 1, Math.floor(gc));
+    const j = Math.min(nr - 1, Math.floor(gr));
+    const u = gc - i;
+    const v = gr - j;
+    const h = (jj, ii) => heights[jj * step * cols + ii * step];
+    const a = h(j, i), b = h(j, i + 1), c = h(j + 1, i), d = h(j + 1, i + 1);
+    // メッシュは b-c の対角線で分割している
+    if (u + v <= 1) return a + u * (b - a) + v * (c - a);
+    return d + (1 - u) * (c - d) + (1 - v) * (b - d);
   }
 
   heightAtLonLat(lon, lat) {

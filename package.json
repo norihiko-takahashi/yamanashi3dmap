@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "data": "node scripts/build-data.mjs",
     "data:gsi": "node scripts/build-data.mjs --source gsi",
-    "data:terrarium": "node scripts/build-data.mjs --source terrarium"
+    "data:terrarium": "node scripts/build-data.mjs --source terrarium",
+    "data:railways": "node scripts/build-railways.mjs"
   },
   "dependencies": {
     "three": "^0.170.0"
