@@ -13,13 +13,6 @@ const MIN_WIDTH_PX = 6; // 車体の幅が画面上でこれより細くなら�
 const LENGTH_RATIO = 0.4; // 拡大時は車両を短めにして、編成が長くなりすぎないようにする
 const UP = new THREE.Vector3(0, 1, 0);
 const BASE_SPEED = 0.35; // 俯瞰で眺めるときの基準の速さ (km/秒、実際よりかなり速い)
-// 運転席に乗っている電車の走り方 (実際の速さに近づける)。速さは「電車の速さ」の倍率がかかる
-const CAB_RUN = {
-  maxSpeed: 0.035, // km/秒 (時速 126 km)
-  accel: 0.0009, // km/秒² (加速・減速とも 0.9 m/s²)
-  dwell: 15, // 各駅の停車時間 (秒)
-  turnDwell: 25, // 終点で折り返すまでの時間 (秒)
-};
 const CAB_EYE = { ahead: 0.004, height: 0.004, lookAhead: 0.35 }; // 運転席の目の位置と視線の先 (km)
 const MAX_GRADE = 0.04; // 線路の勾配の上限 (40‰)。これより急な地形はトンネル・橋とみなす
 
@@ -41,7 +34,7 @@ export class Railways {
     this.cab = null; // 運転席に乗っている電車 { line, train }
   }
 
-  // 運転席に乗る。カメラに最も近い電車を選ぶ
+  // 運転席に乗る。カメラに最も近い電車を選び、その電車はそのままの速さで走り続ける
   enterCab(id, near) {
     const l = this.#get(id);
     if (!l.trainsVisible) this.setTrainsVisible(id, true);
@@ -50,81 +43,22 @@ export class Railways {
       const d = this.#pointAt(l.paths[0], l.state[t].head, this.tmpA).distanceTo(near);
       if (d < bd) { bd = d; best = t; }
     }
-    const st = l.state[best];
-    // 運転席では、実寸の編成の先頭が線路の範囲に収まるように置き直す
-    const tl = (CAR.length + CAR.gap) * l.cars;
-    st.head = THREE.MathUtils.clamp(st.head, tl, l.paths[0].length - tl);
-    this.cab = { line: l, train: best, v: 0, wait: 0, nextStop: null };
-    this.#pickNextStop();
-    st.kmh = 0;
+    this.cab = { line: l, train: best };
     return l;
   }
 
-  // 運転席から降りる。俯瞰の往復運動に、今の位置から続くよう時計を合わせる
   exitCab() {
-    if (!this.cab) return;
-    const { line: l, train: t } = this.cab;
-    const st = l.state[t];
-    const path = l.paths[0];
-    const legSec = path.length / BASE_SPEED + 6;
-    const tl = (CAR.length + CAR.gap) * l.cars;
-    const travel = Math.max(0.1, path.length - tl);
-    const along = THREE.MathUtils.clamp(st.dir > 0 ? st.head - tl : path.length - tl - st.head, 0, travel);
-    // smootherstep の逆関数を二分法で求める
-    let lo = 0, hi = 1;
-    for (let i = 0; i < 30; i++) {
-      const mid = (lo + hi) / 2;
-      const u = THREE.MathUtils.smootherstep(THREE.MathUtils.clamp((mid - 0.08) / 0.84, 0, 1), 0, 1);
-      if (u * travel < along) lo = mid;
-      else hi = mid;
-    }
-    const phase = lo * legSec + (st.dir > 0 ? 0 : legSec);
-    const base = (t / l.trains) * 2 * legSec + l.offset;
-    st.clock = (((phase - base) % (2 * legSec)) + 2 * legSec) % (2 * legSec);
     this.cab = null;
   }
 
-  // 進行方向で次に止まる駅 (駅がなければ終点)
-  #pickNextStop() {
-    const { line: l, train: t } = this.cab;
-    const st = l.state[t];
-    const path = l.paths[0];
-    const tl = (CAR.length + CAR.gap) * l.cars;
-    const end = st.dir > 0 ? path.length - 0.002 : tl + 0.002;
-    const ahead = l.stops
-      .filter((s) => (st.dir > 0 ? s.at > st.head + 0.05 : s.at < st.head - 0.05))
-      .sort((a, b) => (st.dir > 0 ? a.at - b.at : b.at - a.at));
-    const stop = ahead[0];
-    // 終点の駅は折り返し地点として扱う
-    if (stop && (st.dir > 0 ? stop.at < end - 0.05 : stop.at > end + 0.05)) this.cab.nextStop = { ...stop, terminal: false };
-    else this.cab.nextStop = { name: stop?.name ?? '終点', at: end, terminal: true };
-  }
-
-  // 運転席の電車を 1 フレーム分進める (駅で止まり、終点で折り返す)
-  #runCab(dt) {
-    const c = this.cab;
-    const st = c.line.state[c.train];
-    const vmax = CAB_RUN.maxSpeed * this.speed;
-    const a = CAB_RUN.accel * Math.max(1, this.speed);
-    if (c.wait > 0) {
-      c.wait -= dt;
-      if (c.wait <= 0 && c.nextStop.terminal) st.dir = -st.dir;
-      if (c.wait <= 0) this.#pickNextStop();
-      st.kmh = 0;
-      return;
+  // 進行方向で次の駅 (なければ終点)
+  #nextStation(l, st) {
+    let best = null;
+    for (const s of l.stops) {
+      const ahead = (s.at - st.head) * st.dir;
+      if (ahead > 0.05 && (!best || ahead < (best.at - st.head) * st.dir)) best = s;
     }
-    const remain = Math.abs(c.nextStop.at - st.head);
-    // 止まる位置までに減速が間に合う速さを上限にする
-    const vStop = Math.sqrt(2 * a * remain);
-    c.v = Math.min(vmax, vStop, c.v + a * dt);
-    const step = Math.min(remain, c.v * dt);
-    st.head += st.dir * step;
-    st.kmh = c.v * 3600;
-    if (remain - step < 0.0005) {
-      st.head = c.nextStop.at;
-      c.v = 0;
-      c.wait = c.nextStop.terminal ? CAB_RUN.turnDwell : CAB_RUN.dwell;
-    }
+    return best ? best.name : '終点';
   }
 
   // 運転席の目の位置・視線の先・速さ (km/h) を返す
@@ -138,9 +72,7 @@ export class Railways {
     target.y += CAB_EYE.height * Math.max(1, this.exag * 0.5);
     // 目の位置が地表より下ならトンネルの中
     const tunnel = this.terrain.surfaceHeightAtXZ(eye.x, eye.z) / 1000 * this.exag > eye.y;
-    const c = this.cab;
-    const status = c.wait > 0 ? (c.nextStop.terminal ? `${c.nextStop.name} で折り返し待ち` : `${c.nextStop.name} に停車中`) : `次は ${c.nextStop.name}`;
-    return { kmh: st.kmh, name: line.name, tunnel, status };
+    return { kmh: st.kmh, name: line.name, tunnel, status: `次は ${this.#nextStation(line, st)}` };
   }
 
   setResolution(w, h) {
@@ -210,22 +142,23 @@ export class Railways {
           sl = (path.length * 0.4) / ((CAR.length + CAR.gap) * l.cars);
         }
         const sp = (CAR.length + CAR.gap) * sl;
-        const tl = sp * l.cars;
 
-        if (inCab) {
-          this.#runCab(dt);
-        } else {
-          st.clock += dt * this.speed;
-          const travel = Math.max(0.1, path.length - tl);
-          const phase = (st.clock + (t / l.trains) * 2 * legSec + l.offset) % (2 * legSec);
-          const forward = phase < legSec;
-          const p = (forward ? phase : phase - legSec) / legSec;
-          const u = THREE.MathUtils.smootherstep(THREE.MathUtils.clamp((p - 0.08) / 0.84, 0, 1), 0, 1);
-          const along = travel * u;
-          // 先頭車両の位置。進行方向の後ろに車両が続く
-          st.head = forward ? tl + along : path.length - tl - along;
-          st.dir = forward ? 1 : -1;
-        }
+        // 位置は実寸の編成の長さで決める (拡大率が変わっても、乗った瞬間に位置が飛ばないように)
+        const realLen = (CAR.length + CAR.gap) * l.cars;
+        st.clock += dt * this.speed;
+        const travel = Math.max(0.1, path.length - realLen);
+        const phase = (st.clock + (t / l.trains) * 2 * legSec + l.offset) % (2 * legSec);
+        const forward = phase < legSec;
+        const p = (forward ? phase : phase - legSec) / legSec;
+        const u = THREE.MathUtils.smootherstep(THREE.MathUtils.clamp((p - 0.08) / 0.84, 0, 1), 0, 1);
+        const along = travel * u;
+        // 先頭車両の位置。進行方向の後ろに車両が続く
+        const nextHead = forward ? realLen + along : path.length - realLen - along;
+        // 運転席に表示する速さ (km/h)。折り返しの瞬間などの飛びは無視して平滑化する
+        const moved = Math.abs(nextHead - st.head);
+        if (inCab && dt > 0 && moved < 5) st.kmh += ((moved / dt) * 3600 - st.kmh) * (1 - Math.exp(-dt / 0.5));
+        st.head = nextHead;
+        st.dir = forward ? 1 : -1;
         const head = st.head;
         const dir = st.dir;
 
