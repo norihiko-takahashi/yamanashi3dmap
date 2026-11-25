@@ -75,6 +75,11 @@ export class Railways {
     return { kmh: st.kmh, name: line.name, tunnel, status: `次は ${this.#nextStation(line, st)}` };
   }
 
+  // 夜は電車の車体をほんのり光らせて、暗い中でも見えるようにする
+  setNight(on) {
+    for (const l of this.lines) l.trainMesh.material.emissive.set(on ? '#5a5248' : '#000000');
+  }
+
   setResolution(w, h) {
     for (const l of this.lines) for (const m of l.lineMaterials) m.resolution.set(w, h);
   }

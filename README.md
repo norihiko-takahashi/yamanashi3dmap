@@ -25,6 +25,12 @@ three.js で描いた山梨県の立体地図です。標高データから地�
     - Shift+ホイール: 電車の速さを変える
     - ダブルクリック（ダブルタップ）: 正面に戻す
   - 「降りる」または Esc キーで元の視点に戻ります
+- 時間帯（昼・夜）: 夜は月明かりと星空になり、建物用地（国土数値情報 土地利用細分メッシュ）から作った街明かりが灯ります
+- 季節（春・夏・秋・冬）: 初期値は今日の日付の季節
+  - 春: 甲府盆地の果樹園（その他の農用地）に桃の花、低い所の森林に新緑、標高 2,300 m より上に残雪
+  - 夏: 濃い緑、雪なし
+  - 秋: 標高 350〜2,000 m の森林に紅葉、1,600〜2,600 m にカラマツの黄葉、標高 3,300 m より上に初冠雪
+  - 冬: 標高 1,250 m より上に雪（急な斜面は薄め）、低い所の林は落葉、湖面は白っぽく
 - 富士山が見える場所: レイヤーの「富士山が見える場所」で、富士山の山頂付近が見えない場所を暗く表示します
   - 地形をクリックすると、その地点から富士山が見えるか・山頂までの距離と方角を表示し、「ここから富士山の方を見る」でその地点からの眺めに移ります
 
@@ -53,6 +59,7 @@ npm run data:terrarium  # AWS Terrain Tiles から生成（国土地理院に接
 | `municipalities.json` | 市町村界（GeoJSON）。国土数値情報 行政区域データを簡略化 |
 | `rivers.json` | 河川（GeoJSON）。標高データから流路を計算し、集水面積 25 km² 以上を抽出 |
 | `meta.json` | グリッドの範囲・間隔、出典 |
+| `landuse.png` | 土地利用の割合（R = 建物用地、G = その他の農用地（果樹園など）、B = 森林）。国土数値情報 土地利用細分メッシュ（L03-b 2021年度、100 m メッシュ）から作成（`npm run data:landuse`、`meta.json` の範囲を使うので `data:gsi` などの後に実行） |
 | `railways.json` | 鉄道の線路と駅。国土数値情報 鉄道データ（N02-24）から、山梨県内を通る路線を抜き出して作成（`npm run data:railways`） |
 
 `railways.json` は `npm run data:railways` で生成し、リポジトリにコミットしています。国土数値情報の配布元は ZIP 形式のため、同じ GeoJSON を置いている GitHub 上の複製から取得し、SHA-256 で元ファイルと同一であることを確認しています。
@@ -68,6 +75,7 @@ GitHub Actions のビルドでは、毎回国土地理院の標高タイルか�
 
 - 標高: [国土地理院 標高タイル](https://maps.gsi.go.jp/development/ichiran.html)（コミット済みのデータは [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) から生成）
 - 行政区域: [国土数値情報（行政区域データ）](https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N03-v3_1.html)（国土交通省）を加工。GeoJSON は [niiyz/JapanCityGeoJson](https://github.com/niiyz/JapanCityGeoJson) を利用
+- 土地利用（夜景・季節）: [国土数値情報（土地利用細分メッシュ）](https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-L03-b-2021.html)（国土交通省）を加工
 - 鉄道: [国土数値情報（鉄道データ）](https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-N02-2024.html)（国土交通省）を加工
 - 河川・湖: 上記の標高データから推定
 - 描画: [three.js](https://threejs.org/)
