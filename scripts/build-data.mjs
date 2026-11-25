@@ -184,8 +184,11 @@ const WATER = {
   maxSd: 0.1, // 湖面の高さのばらつき (標準偏差, m) の上限
   minCells: 60, // 最小面積 (セル数, 約 0.33 km²)
   matchKm: 2, // 名前の分かっている湖の代表点と、湖面の重心との最大距離
-  growTol: 0.6, // 水平な湖面から、つながっている同じ高さのセルへ広げるときの許容差 (m)
-  maxSdGrown: 0.3, // 広げた後の湖面のばらつきの上限 (m)
+  // 湖は周りを湖面より高い土地に囲まれているので、湖面の高さ (+ 余裕) まで水を満たしても
+  // ほぼ同じ範囲にとどまる。平野の平らな部分は下流側へ水があふれて際限なく広がる
+  fillTol: 0.6, // 湖面からこの高さまで水を満たして確かめる (m)
+  maxFillRatio: 3, // 満たした範囲が核の何倍を超えたら「水がたまらない」とみなすか
+  maxFillExtra: 3000, // 核が小さいときに許す増分 (セル数)
 };
 
 function detectWater({ cols, rows, heights }, report = []) {
@@ -208,6 +211,29 @@ function detectWater({ cols, rows, heights }, report = []) {
       sd: Math.sqrt(Math.max(0, sh2 / n - mean * mean)),
     };
   };
+  // cells からつながっている、高さが top 以下のセルをすべて集める。limit を超えたら null
+  const fillBelow = (cells, top, limit) => {
+    const inside = new Set(cells);
+    const out = [...cells];
+    const st = [...cells];
+    while (st.length) {
+      const i = st.pop();
+      const [r, c] = rc(i);
+      for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) return null; // 範囲の端まで広がった
+        const j = rr * cols + cc;
+        if (!inside.has(j) && heights[j] <= top) {
+          inside.add(j);
+          out.push(j);
+          st.push(j);
+          if (out.length > limit) return null;
+        }
+      }
+    }
+    return out;
+  };
+  const rejected = [];
   const distKm = (a, lon, lat) =>
     Math.hypot((a.lon - lon) * 111.32 * Math.cos((lat * Math.PI) / 180), (a.lat - lat) * 110.95);
 
@@ -254,29 +280,17 @@ function detectWater({ cols, rows, heights }, report = []) {
     if (cells.length < WATER.minCells) continue;
     const core = stats(cells);
     if (core.sd > WATER.maxSd) continue;
-    // 水平な部分を核として、つながっている湖面の高さに近いセルへ広げる
-    // (標高データの誤差で湖面がわずかに波打っている部分を取り込むため)
+    // 水平な部分を核として、湖面の高さ (+ fillTol) まで水を満たす。
+    // 湖ならほぼ核の範囲にとどまり、平野ならあふれて広がるので除外する
     const lv = core.height;
-    const inRegion = new Set(cells);
-    const grown = [...cells];
-    stack.push(...cells);
-    while (stack.length) {
-      const i = stack.pop();
-      const [r, c] = rc(i);
-      for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const rr = r + dr, cc = c + dc;
-        if (rr < 0 || cc < 0 || rr >= rows || cc >= cols) continue;
-        const j = rr * cols + cc;
-        if (!inRegion.has(j) && Math.abs(heights[j] - lv) <= WATER.growTol) {
-          inRegion.add(j);
-          grown.push(j);
-          stack.push(j);
-        }
-      }
+    const limit = Math.max(cells.length * WATER.maxFillRatio, cells.length + WATER.maxFillExtra);
+    const grown = fillBelow(cells, lv + WATER.fillTol, limit);
+    for (const i of cells) seen[i] = 1;
+    const st = stats(grown ?? cells);
+    if (!grown) {
+      rejected.push({ ...st, method: '除外 (水がたまらない平らな土地)', name: '' });
+      continue;
     }
-    for (const i of grown) seen[i] = 1;
-    const st = stats(grown);
-    if (st.sd > WATER.maxSdGrown) continue;
     regions.push({ cells: grown, level: lv, ...st, method: '水平な湖面', name: '' });
   }
 
@@ -299,34 +313,21 @@ function detectWater({ cols, rows, heights }, report = []) {
         hist.set(k, (hist.get(k) ?? 0) + 1);
       }
     const level = [...hist.entries()].reduce((a, b) => (b[1] > a[1] ? b : a))[0] / 2;
-    let seed = -1, best = Infinity;
+    // 代表点の付近で湖面と同じ高さのセルを核にして、同じく水がたまるかを確かめる
+    const coreCells = [];
     for (let dr = -7; dr <= 7; dr++)
       for (let dc = -6; dc <= 6; dc++) {
         const j = (r0 + dr) * cols + c0 + dc;
-        if (Math.abs(heights[j] - level) <= 0.25 && dr * dr + dc * dc < best) { best = dr * dr + dc * dc; seed = j; }
+        if (Math.abs(heights[j] - level) <= 0.25) coreCells.push(j);
       }
-    const cells = [];
-    const seenL = new Set([seed]);
-    stack.push(seed);
-    while (stack.length && cells.length < 5000) {
-      const i = stack.pop();
-      cells.push(i);
-      const [r, c] = rc(i);
-      for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const rr = r + dr, cc = c + dc;
-        if (Math.abs(rr - r0) > 60 || Math.abs(cc - c0) > 60) continue;
-        const j = rr * cols + cc;
-        if (!seenL.has(j) && Math.abs(heights[j] - level) <= 0.5) {
-          seenL.add(j);
-          stack.push(j);
-        }
-      }
-    }
-    const st = stats(cells);
-    if (cells.length >= 20 && cells.length < 5000 && st.sd <= 0.5) {
+    const cells = fillBelow(coreCells, level + WATER.fillTol, Math.max(coreCells.length * WATER.maxFillRatio, 600)) ?? [];
+    const st = cells.length ? stats(cells) : { km2: 0 };
+    if (cells.length >= 20) {
       regions.push({ cells, level, ...st, method: '代表点から塗り広げ', name: lake.name });
     } else {
-      console.warn(`  ${lake.name}: 水平な湖面が見つからないため表示しない (面積 ${st.km2.toFixed(2)} km², ばらつき ${st.sd.toFixed(2)} m)`);
+      console.warn(
+        `  ${lake.name}: 代表点の付近に水がたまる湖面が見つからないため表示しない (湖面の推定 ${level.toFixed(1)} m)`,
+      );
     }
   }
 
@@ -347,6 +348,8 @@ function detectWater({ cols, rows, heights }, report = []) {
     const { cells, ...rest } = g;
     report.push(rest);
   }
+  // 除外した領域も確認できるように一覧に含める (表示はしない)
+  report.push(...rejected.filter((g) => g.km2 >= 0.5));
   return mask;
 }
 
@@ -590,13 +593,14 @@ async function printWaterReport(report, municipalities) {
   const lines = rows.map(
     (w) =>
       `| ${w.method} | ${w.name || '-'} | ${muniOf(w.lon, w.lat)} | ${w.lon.toFixed(3)}, ${w.lat.toFixed(3)} | ` +
-      `${w.km2.toFixed(2)} | ${w.height.toFixed(1)} | ${w.sd.toFixed(2)} |`,
+      `${w.km2.toFixed(2)} | ${w.height.toFixed(1)} |`,
   );
   const table = [
-    `湖として判定した領域: ${rows.length} か所`,
+    `湖として判定した領域: ${rows.filter((w) => !w.method.startsWith('除外')).length} か所` +
+      ` (除外した平らな土地 ${rows.filter((w) => w.method.startsWith('除外')).length} か所)`,
     '',
-    '| 判定方法 | 湖名 | 場所 | 経度, 緯度 | 面積 (km²) | 平均標高 (m) | 標高のばらつき (m) |',
-    '| --- | --- | --- | --- | ---: | ---: | ---: |',
+    '| 判定方法 | 湖名 | 場所 | 経度, 緯度 | 面積 (km²) | 平均標高 (m) |',
+    '| --- | --- | --- | --- | ---: | ---: |',
     ...lines,
   ].join('\n');
   console.log(table);
