@@ -8,16 +8,18 @@ export class Labels {
     this.camera = camera;
     this.items = [];
     this.hiddenTypes = new Set();
+    this.hiddenGroups = new Set();
     this.v = new THREE.Vector3();
   }
 
-  add({ type, text, html, lon, lat, priority = 0, anchorBottom = false }) {
+  // groups: このラベルが属するグループ (例: 駅名の路線)。どれか 1 つが表示中なら表示する
+  add({ type, text, html, lon, lat, priority = 0, anchorBottom = false, groups = null }) {
     const el = document.createElement('div');
     el.className = `label ${type}`;
     if (html) el.innerHTML = html;
     else el.textContent = text;
     this.container.append(el);
-    const item = { type, el, lon, lat, priority, anchorBottom, position: new THREE.Vector3(), visible: true, w: 0, h: 0 };
+    const item = { type, el, lon, lat, priority, anchorBottom, groups, position: new THREE.Vector3(), visible: true, w: 0, h: 0 };
     this.items.push(item);
     this.sorted = null;
     return item;
@@ -28,12 +30,20 @@ export class Labels {
     else this.hiddenTypes.add(type);
   }
 
+  setGroupVisible(group, visible) {
+    if (visible) this.hiddenGroups.delete(group);
+    else this.hiddenGroups.add(group);
+  }
+
   update(width, height) {
     this.sorted ??= [...this.items].sort((a, b) => b.priority - a.priority);
     const placed = [];
     const cam = this.camera;
     for (const item of this.sorted) {
-      const show = item.visible && !this.hiddenTypes.has(item.type);
+      const show =
+        item.visible &&
+        !this.hiddenTypes.has(item.type) &&
+        (!item.groups || item.groups.some((g) => !this.hiddenGroups.has(g)));
       if (!show) {
         item.el.style.display = 'none';
         continue;

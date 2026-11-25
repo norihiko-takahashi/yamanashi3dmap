@@ -237,6 +237,63 @@ input[type='checkbox'] {
   font-size: 13px;
 }
 
+/* ---------------------------------------------------------------- 鉄道 */
+.rail-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 8px;
+}
+
+.rail-table th {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding: 0 0 4px;
+}
+
+.rail-table th:first-child {
+  text-align: left;
+}
+
+.rail-table td {
+  padding: 3px 0;
+  text-align: center;
+}
+
+.rail-table td:first-child {
+  text-align: left;
+}
+
+.rail-table tr.all td {
+  border-top: 1px solid var(--panel-border);
+  color: var(--muted);
+  padding-top: 5px;
+}
+
+.rail-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rail-swatch {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  outline: 1px solid rgba(0, 0, 0, 0.6);
+}
+
+.label.station {
+  color: #fff;
+  font-size: 10.5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(10, 16, 24, 0.62);
+  border-left: 3px solid var(--line-color, #fff);
+  text-shadow: none;
+}
+
 /* ---------------------------------------------------------------- 地点情報 */
 .info {
   position: absolute;

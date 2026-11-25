@@ -59,6 +59,21 @@
           <label class="check"><input data-labels="lake" type="checkbox" checked /> 湖名</label>
         </section>
 
+        <section id="railway-section">
+          <h2>鉄道</h2>
+          <table class="rail-table">
+            <thead>
+              <tr><th scope="col">路線</th><th scope="col">線路</th><th scope="col">電車</th></tr>
+            </thead>
+            <tbody id="rail-list"></tbody>
+          </table>
+          <label class="check"><input data-labels="station" type="checkbox" /> 駅名</label>
+          <label class="slider">
+            <span>電車の速さ <output id="train-speed-value">1.0</output> 倍</span>
+            <input id="train-speed" type="range" min="0.2" max="5" step="0.1" value="1" />
+          </label>
+        </section>
+
         <section id="legend-section">
           <h2>標高</h2>
           <div id="legend" class="legend"></div>

@@ -4,6 +4,7 @@ import { MOUNTAINS, LAKES, SPOTS } from './places.js';
 import { Terrain } from './terrain.js';
 import { paintTexture, COLOR_STOPS } from './texture.js';
 import { Labels } from './labels.js';
+import { Railways } from './railways.js';
 
 const BASE = import.meta.env.BASE_URL;
 const isMobile = matchMedia('(max-width: 720px), (pointer: coarse)').matches;
@@ -39,11 +40,12 @@ async function loadMask(name, cols, rows) {
 
 async function main() {
   const meta = await loadJSON('meta.json');
-  const [demBuf, municipalities, rivers, water] = await Promise.all([
+  const [demBuf, municipalities, rivers, water, railData] = await Promise.all([
     loadBinary('dem.bin'),
     loadJSON('municipalities.json'),
     loadJSON('rivers.json'),
     loadMask('water.png', meta.cols, meta.rows),
+    loadJSON('railways.json'),
   ]);
   $('loading-text').textContent = '地形を生成中…';
   await new Promise((r) => requestAnimationFrame(r));
@@ -102,6 +104,10 @@ async function main() {
     new THREE.MeshStandardMaterial({ color: '#5b4a3a', roughness: 1, side: THREE.DoubleSide }),
   );
   scene.add(skirt);
+
+  // ------------------------------------------------------------ 鉄道
+  const railways = new Railways(scene, terrain, railData);
+  railways.setResolution(window.innerWidth, window.innerHeight);
 
   // ------------------------------------------------------------ ライト
   const hemi = new THREE.HemisphereLight('#d6e6ff', '#3a2f24', 0.7);
@@ -196,6 +202,21 @@ async function main() {
     labels.add({ type: 'mountain', html: `${m.name}<small>${m.elev.toLocaleString()}m</small>`, lon: m.lon, lat: m.lat, priority: 3 + m.elev / 4000 });
   }
   for (const l of LAKES) labels.add({ type: 'lake', text: l.name, lon: l.lon, lat: l.lat, priority: 2 });
+  // 駅名 (複数路線の駅は 1 つにまとめ、どれかの路線の線路が表示中なら表示する)
+  const stationLabels = new Map();
+  for (const line of railData.lines) {
+    for (const st of line.stations) {
+      const known = stationLabels.get(st.name);
+      if (known) {
+        known.groups.push(line.id);
+        continue;
+      }
+      const item = labels.add({ type: 'station', text: st.name, lon: st.lon, lat: st.lat, priority: st.inPref ? 0.6 : 0.4, groups: [line.id] });
+      item.el.style.setProperty('--line-color', line.color);
+      stationLabels.set(st.name, item);
+    }
+  }
+  labels.setTypeVisible('station', false);
   const marker = labels.add({ type: 'marker', text: '▼', lon: 0, lat: 0, priority: 100, anchorBottom: true });
   marker.visible = false;
 
@@ -215,6 +236,7 @@ async function main() {
     mesh.scale.y = v;
     skirt.scale.y = v;
     controls.target.y *= v / prev;
+    railways.setExaggeration(v);
     camera.position.y = Math.max(camera.position.y, controls.target.y + 0.5);
     placeLabels();
     if (useShadows) renderer.shadowMap.needsUpdate = true;
@@ -289,6 +311,64 @@ async function main() {
   bindSlider('sun-az', 'sunAz', (v) => String(v), (v) => { state.sunAz = v; updateSun(); });
   bindSlider('sun-alt', 'sunAlt', (v) => String(v), (v) => { state.sunAlt = v; updateSun(); });
 
+  // 鉄道: 路線ごとの線路・電車の表示切り替え
+  const railList = $('rail-list');
+  const railChecks = { track: [], trains: [] };
+  const makeCheck = (label, checked, onChange) => {
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = checked;
+    input.setAttribute('aria-label', label);
+    input.addEventListener('change', () => onChange(input.checked));
+    return input;
+  };
+  const allRow = document.createElement('tr');
+  allRow.className = 'all';
+  const allTrack = makeCheck('すべての線路', true, (v) => railChecks.track.forEach((c) => c.checked !== v && c.click()));
+  const allTrains = makeCheck('すべての電車', true, (v) => railChecks.trains.forEach((c) => c.checked !== v && c.click()));
+  const syncAll = () => {
+    for (const [key, all] of [['track', allTrack], ['trains', allTrains]]) {
+      const n = railChecks[key].filter((c) => c.checked).length;
+      all.checked = n === railChecks[key].length;
+      all.indeterminate = n > 0 && n < railChecks[key].length;
+    }
+  };
+  for (const line of railData.lines) {
+    const tr = document.createElement('tr');
+    const name = document.createElement('td');
+    name.innerHTML = `<span class="rail-name"><span class="rail-swatch" style="background:${line.color}"></span>${line.name}</span>`;
+    const track = makeCheck(`${line.name} の線路`, true, (v) => {
+      railways.setTrackVisible(line.id, v);
+      labels.setGroupVisible(line.id, v);
+      syncAll();
+      requestRender();
+    });
+    const trains = makeCheck(`${line.name} の電車`, true, (v) => {
+      railways.setTrainsVisible(line.id, v);
+      syncAll();
+      requestRender();
+    });
+    railChecks.track.push(track);
+    railChecks.trains.push(trains);
+    const td1 = document.createElement('td');
+    const td2 = document.createElement('td');
+    td1.append(track);
+    td2.append(trains);
+    tr.append(name, td1, td2);
+    railList.append(tr);
+  }
+  {
+    const name = document.createElement('td');
+    name.textContent = 'すべて';
+    const td1 = document.createElement('td');
+    const td2 = document.createElement('td');
+    td1.append(allTrack);
+    td2.append(allTrains);
+    allRow.append(name, td1, td2);
+    railList.append(allRow);
+  }
+  bindSlider('train-speed', 'trainSpeed', (v) => v.toFixed(1), (v) => { railways.speed = v; });
+
   $('auto-rotate').addEventListener('change', (e) => {
     controls.autoRotate = e.target.checked;
     requestRender();
@@ -338,7 +418,7 @@ async function main() {
 
   // 出典
   $('attribution').innerHTML =
-    meta.attribution
+    [...meta.attribution, railData.attribution]
       .map((a) => (a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${a.text}</a>` : a.text))
       .join('<br>') + '<br>描画: <a href="https://threejs.org/" target="_blank" rel="noopener">three.js</a>';
 
@@ -347,6 +427,7 @@ async function main() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight, false);
+    railways.setResolution(window.innerWidth, window.innerHeight);
     requestRender();
   });
 
@@ -371,6 +452,7 @@ async function main() {
       needsRender = true;
     }
     if (controls.autoRotate) needsRender = true;
+    if (railways.update(now / 1000, camera, renderer.domElement.clientHeight)) needsRender = true;
     if (!needsRender) return;
     needsRender = false;
     renderer.render(scene, camera);
