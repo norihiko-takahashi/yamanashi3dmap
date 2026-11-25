@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MOUNTAINS, LAKES, SPOTS } from './places.js';
 import { Terrain } from './terrain.js';
-import { paintTexture, COLOR_STOPS } from './texture.js';
+import { paintTexture, paintLights, COLOR_STOPS } from './texture.js';
 import { Labels } from './labels.js';
 import { Railways } from './railways.js';
 
@@ -38,15 +38,45 @@ async function loadMask(name, cols, rows) {
   return out;
 }
 
+// RGB 画像を読み込み、画素ごとの [R, G, B] を並べた配列にする。読み込めなければ null
+async function loadRGB(name, cols, rows) {
+  try {
+    const img = new Image();
+    img.src = `${BASE}data/${name}`;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = cols;
+    c.height = rows;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const rgba = ctx.getImageData(0, 0, cols, rows).data;
+    const out = new Uint8Array(cols * rows * 3);
+    for (let i = 0, j = 0; i < out.length; i += 3, j += 4) {
+      out[i] = rgba[j]; out[i + 1] = rgba[j + 1]; out[i + 2] = rgba[j + 2];
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+// 今日の日付から季節を決める (3〜5 月: 春、6〜8 月: 夏、9〜11 月: 秋、12〜2 月: 冬)
+function currentSeason() {
+  const m = new Date().getMonth() + 1;
+  return m >= 3 && m <= 5 ? 'spring' : m >= 6 && m <= 8 ? 'summer' : m >= 9 && m <= 11 ? 'autumn' : 'winter';
+}
+
 async function main() {
   const meta = await loadJSON('meta.json');
-  const [demBuf, municipalities, rivers, water, railData, fujiView] = await Promise.all([
+  const [demBuf, municipalities, rivers, water, railData, fujiView, landuse, landuseMeta] = await Promise.all([
     loadBinary('dem.bin'),
     loadJSON('municipalities.json'),
     loadJSON('rivers.json'),
     loadMask('water.png', meta.cols, meta.rows),
     loadJSON('railways.json'),
     loadMask('fuji_view.png', meta.cols, meta.rows),
+    loadRGB('landuse.png', meta.cols, meta.rows),
+    loadJSON('landuse.json').catch(() => null),
   ]);
   $('loading-text').textContent = '地形を生成中…';
   await new Promise((r) => requestAnimationFrame(r));
@@ -84,9 +114,12 @@ async function main() {
   });
   const texScale = !isMobile && renderer.capabilities.maxTextureSize >= meta.cols * 2 ? 2 : 1;
   const layers = { boundaries: true, rivers: true, lakes: true, outside: true, fujiView: false };
+  const scenery = { night: false, season: currentSeason() };
   const texCanvas = document.createElement('canvas');
   const repaint = () =>
-    paintTexture(texCanvas, { meta, terrain, water, fujiView, municipalities, rivers, layers, scale: texScale });
+    paintTexture(texCanvas, {
+      meta, terrain, water, fujiView, landuse, season: scenery.season, municipalities, rivers, layers, scale: texScale,
+    });
   repaint();
   const texture = new THREE.CanvasTexture(texCanvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -94,7 +127,23 @@ async function main() {
   texture.generateMipmaps = true;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
 
-  const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 1, metalness: 0 });
+  // 夜景の街明かり (発光マップ)。昼は発光の強さを 0 にする
+  const lightsCanvas = document.createElement('canvas');
+  const repaintLights = () =>
+    paintLights(lightsCanvas, { meta, landuse, municipalities, dimOutside: layers.outside, scale: texScale });
+  repaintLights();
+  const lightsTexture = new THREE.CanvasTexture(lightsCanvas);
+  lightsTexture.colorSpace = THREE.SRGBColorSpace;
+  lightsTexture.anisotropy = texture.anisotropy;
+
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 1,
+    metalness: 0,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveMap: lightsTexture,
+    emissiveIntensity: 0,
+  });
   const mesh = new THREE.Mesh(terrain.geometry, material);
   mesh.castShadow = useShadows;
   mesh.receiveShadow = useShadows;
@@ -126,16 +175,45 @@ async function main() {
 
   const state = { exag: 2, sunAz: 135, sunAlt: 40 };
 
+  // 夜空の星 (夜だけ表示)
+  const stars = (() => {
+    const n = 1800;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const az = Math.random() * Math.PI * 2;
+      const el = Math.asin(Math.random()) * 0.95 + 0.03; // 上空ほどまばらに
+      pos[i * 3] = Math.cos(el) * Math.sin(az) * 900;
+      pos[i * 3 + 1] = Math.sin(el) * 900;
+      pos[i * 3 + 2] = -Math.cos(el) * Math.cos(az) * 900;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const p = new THREE.Points(g, new THREE.PointsMaterial({ color: '#dfe7ff', size: 2, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.9 }));
+    p.visible = false;
+    p.renderOrder = -1;
+    return p;
+  })();
+  scene.add(stars);
+
+  const DAY = { sky: '#0e1620', hemiSky: '#d6e6ff', hemiGround: '#3a2f24', hemi: 0.7, exposure: 1.05 };
+  const NIGHT = { sky: '#04060d', hemiSky: '#2a3a62', hemiGround: '#07070b', hemi: 0.22, exposure: 1.0, moon: '#a9bbe6', moonIntensity: 0.32, lights: 1.25 };
+
   function updateSun() {
     const az = THREE.MathUtils.degToRad(state.sunAz);
     const alt = THREE.MathUtils.degToRad(state.sunAlt);
     const dir = new THREE.Vector3(Math.sin(az) * Math.cos(alt), Math.sin(alt), -Math.cos(az) * Math.cos(alt));
     sun.position.copy(dir.multiplyScalar(300));
     sun.target.position.set(0, 0, 0);
-    // 低い太陽は少し赤く、暗く
-    const warm = THREE.MathUtils.clamp(state.sunAlt / 30, 0, 1);
-    sun.color.setRGB(1, 0.78 + 0.2 * warm, 0.6 + 0.3 * warm);
-    sun.intensity = 1.6 + 1.2 * warm;
+    if (scenery.night) {
+      // 夜は太陽の代わりに、青白い月明かりにする (向きは「太陽の方位・高さ」のまま)
+      sun.color.set(NIGHT.moon);
+      sun.intensity = NIGHT.moonIntensity;
+    } else {
+      // 低い太陽は少し赤く、暗く
+      const warm = THREE.MathUtils.clamp(state.sunAlt / 30, 0, 1);
+      sun.color.setRGB(1, 0.78 + 0.2 * warm, 0.6 + 0.3 * warm);
+      sun.intensity = 1.6 + 1.2 * warm;
+    }
     if (useShadows) renderer.shadowMap.needsUpdate = true;
     requestRender();
   }
@@ -547,6 +625,37 @@ async function main() {
     if (e.key === 'Escape') exitCab();
   });
 
+  // 時間帯 (昼・夜) と季節
+  function applyTime() {
+    const p = scenery.night ? NIGHT : DAY;
+    skyColor.set(p.sky);
+    scene.fog.color.copy(skyColor);
+    hemi.color.set(p.hemiSky);
+    hemi.groundColor.set(p.hemiGround);
+    hemi.intensity = p.hemi;
+    renderer.toneMappingExposure = p.exposure;
+    material.emissiveIntensity = scenery.night ? NIGHT.lights : 0;
+    stars.visible = scenery.night;
+    railways.setNight(scenery.night);
+    updateSun();
+  }
+  document.querySelectorAll('input[name=time]').forEach((el) => {
+    el.addEventListener('change', () => {
+      scenery.night = el.value === 'night' && el.checked;
+      applyTime();
+    });
+  });
+  document.querySelectorAll('input[name=season]').forEach((el) => {
+    el.checked = el.value === scenery.season;
+    el.addEventListener('change', () => {
+      if (!el.checked) return;
+      scenery.season = el.value;
+      repaint();
+      texture.needsUpdate = true;
+      requestRender();
+    });
+  });
+
   $('auto-rotate').addEventListener('change', (e) => {
     controls.autoRotate = e.target.checked;
     requestRender();
@@ -560,6 +669,10 @@ async function main() {
       repaintTimer = setTimeout(() => {
         repaint();
         texture.needsUpdate = true;
+        if (el.dataset.layer === 'outside') {
+          repaintLights();
+          lightsTexture.needsUpdate = true;
+        }
         requestRender();
       }, 30);
     });
@@ -596,7 +709,7 @@ async function main() {
 
   // 出典
   $('attribution').innerHTML =
-    [...meta.attribution, railData.attribution]
+    [...meta.attribution, railData.attribution, ...(landuseMeta ? [landuseMeta.attribution] : [])]
       .map((a) => (a.url ? `<a href="${a.url}" target="_blank" rel="noopener">${a.text}</a>` : a.text))
       .join('<br>') + '<br>描画: <a href="https://threejs.org/" target="_blank" rel="noopener">three.js</a>';
 

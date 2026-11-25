@@ -294,6 +294,57 @@ input[type='checkbox'] {
   text-shadow: none;
 }
 
+/* ---------------------------------------------------------------- 時間帯・季節 */
+.seg-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.seg-label {
+  min-width: 3.5em;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.seg label {
+  position: relative;
+  cursor: pointer;
+}
+
+.seg input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.seg span {
+  display: block;
+  padding: 3px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.seg label + label span {
+  border-left: 1px solid var(--panel-border);
+}
+
+.seg input:checked + span {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.seg input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* ---------------------------------------------------------------- 富士山が見える場所 */
 .swatch {
   display: inline-block;

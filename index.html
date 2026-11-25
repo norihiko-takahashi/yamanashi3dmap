@@ -45,6 +45,22 @@
             <span>太陽の高さ <output id="sun-alt-value">40</output>°</span>
             <input id="sun-alt" type="range" min="3" max="90" step="1" value="40" />
           </label>
+          <div class="seg-group">
+            <span class="seg-label">時間帯</span>
+            <div class="seg" role="radiogroup" aria-label="時間帯">
+              <label><input type="radio" name="time" value="day" checked /><span>昼</span></label>
+              <label><input type="radio" name="time" value="night" /><span>夜</span></label>
+            </div>
+          </div>
+          <div class="seg-group">
+            <span class="seg-label">季節</span>
+            <div class="seg" role="radiogroup" aria-label="季節">
+              <label><input type="radio" name="season" value="spring" /><span>春</span></label>
+              <label><input type="radio" name="season" value="summer" /><span>夏</span></label>
+              <label><input type="radio" name="season" value="autumn" /><span>秋</span></label>
+              <label><input type="radio" name="season" value="winter" /><span>冬</span></label>
+            </div>
+          </div>
           <label class="check"><input id="auto-rotate" type="checkbox" /> 自動回転</label>
         </section>
 
