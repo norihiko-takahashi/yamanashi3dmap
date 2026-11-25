@@ -40,12 +40,13 @@ async function loadMask(name, cols, rows) {
 
 async function main() {
   const meta = await loadJSON('meta.json');
-  const [demBuf, municipalities, rivers, water, railData] = await Promise.all([
+  const [demBuf, municipalities, rivers, water, railData, fujiView] = await Promise.all([
     loadBinary('dem.bin'),
     loadJSON('municipalities.json'),
     loadJSON('rivers.json'),
     loadMask('water.png', meta.cols, meta.rows),
     loadJSON('railways.json'),
+    loadMask('fuji_view.png', meta.cols, meta.rows),
   ]);
   $('loading-text').textContent = '地形を生成中…';
   await new Promise((r) => requestAnimationFrame(r));
@@ -82,10 +83,10 @@ async function main() {
     step: isMobile ? 2 : 1,
   });
   const texScale = !isMobile && renderer.capabilities.maxTextureSize >= meta.cols * 2 ? 2 : 1;
-  const layers = { boundaries: true, rivers: true, lakes: true, outside: true };
+  const layers = { boundaries: true, rivers: true, lakes: true, outside: true, fujiView: false };
   const texCanvas = document.createElement('canvas');
   const repaint = () =>
-    paintTexture(texCanvas, { meta, terrain, water, municipalities, rivers, layers, scale: texScale });
+    paintTexture(texCanvas, { meta, terrain, water, fujiView, municipalities, rivers, layers, scale: texScale });
   repaint();
   const texture = new THREE.CanvasTexture(texCanvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -144,7 +145,7 @@ async function main() {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.screenSpacePanning = false;
-  controls.minDistance = 1.5;
+  controls.minDistance = 0.05;
   controls.maxDistance = 320;
   controls.maxPolarAngle = THREE.MathUtils.degToRad(86);
   controls.autoRotateSpeed = 0.6;
@@ -177,7 +178,9 @@ async function main() {
 
   let flight = null;
   function flyTo(spot) {
-    const to = cameraForSpot(spot);
+    flyToPose(cameraForSpot(spot));
+  }
+  function flyToPose(to) {
     flight = {
       t0: performance.now(),
       dur: 1600,
@@ -267,16 +270,49 @@ async function main() {
     const [lon, lat] = terrain.xzToLonLat(x, z);
     const h = terrain.heightAtLonLat(lon, lat);
     const muni = findMunicipality(municipalities, lon, lat);
+    const fuji = fujiFrom(lon, lat);
     $('info-body').innerHTML = `
       <div class="elev">標高 ${Math.round(h).toLocaleString()} m</div>
       <div>${muni ? `山梨県 ${muni}` : '山梨県外'}</div>
-      <div class="sub">北緯 ${lat.toFixed(4)}° / 東経 ${lon.toFixed(4)}°</div>`;
+      <div class="sub">北緯 ${lat.toFixed(4)}° / 東経 ${lon.toFixed(4)}°</div>
+      <div class="fuji ${fuji.visible ? 'yes' : ''}">${fuji.visible ? '富士山が見えます' : '富士山は見えません'}
+        <span class="sub">（山頂まで ${fuji.km.toFixed(1)} km・${fuji.dir}）</span></div>
+      <div class="actions"><button type="button" id="look-fuji">ここから富士山の方を見る</button></div>`;
+    $('look-fuji').addEventListener('click', () => lookAtFujiFrom(lon, lat));
     $('info').hidden = false;
     marker.lon = lon;
     marker.lat = lat;
     marker.visible = true;
     placeLabels();
   }
+  // ------------------------------------------------------------ 富士山が見える場所
+  const [fujiLon, fujiLat] = meta.maxHeightAt;
+  const DIRS = ['北', '北北東', '北東', '東北東', '東', '東南東', '南東', '南南東', '南', '南南西', '南西', '西南西', '西', '西北西', '北西', '北北西'];
+  function fujiFrom(lon, lat) {
+    const c = Math.round((lon - meta.west) / meta.dlon);
+    const r = Math.round((meta.north - lat) / meta.dlat);
+    const inside = c >= 0 && r >= 0 && c < meta.cols && r < meta.rows;
+    const [x0, z0] = terrain.lonLatToXZ(lon, lat);
+    const [x1, z1] = terrain.lonLatToXZ(fujiLon, fujiLat);
+    const bearing = (THREE.MathUtils.radToDeg(Math.atan2(x1 - x0, -(z1 - z0))) + 360) % 360;
+    return {
+      visible: inside && fujiView[r * meta.cols + c] === 1,
+      km: Math.hypot(x1 - x0, z1 - z0),
+      dir: `${DIRS[Math.round(bearing / 22.5) % 16]}の方角`,
+    };
+  }
+  // 地上 (目の高さより少し上) から富士山の山頂の方向を向く
+  function lookAtFujiFrom(lon, lat) {
+    const [x, z] = terrain.lonLatToXZ(lon, lat);
+    const pos = new THREE.Vector3(x, (terrain.heightAtLonLat(lon, lat) / 1000) * state.exag + 0.03, z);
+    const [fx, fz] = terrain.lonLatToXZ(fujiLon, fujiLat);
+    const summit = new THREE.Vector3(fx, (terrain.heightAtLonLat(fujiLon, fujiLat) / 1000) * state.exag, fz);
+    const target = pos.clone().add(summit.clone().sub(pos).normalize().multiplyScalar(0.5));
+    $('info').hidden = true;
+    marker.visible = false;
+    flyToPose({ pos, target });
+  }
+
   $('info-close').addEventListener('click', () => {
     $('info').hidden = true;
     marker.visible = false;
@@ -344,6 +380,7 @@ async function main() {
       requestRender();
     });
     const trains = makeCheck(`${line.name} の電車`, true, (v) => {
+      if (!v && cab?.line.id === line.id) exitCab();
       railways.setTrainsVisible(line.id, v);
       syncAll();
       requestRender();
@@ -352,9 +389,19 @@ async function main() {
     railChecks.trains.push(trains);
     const td1 = document.createElement('td');
     const td2 = document.createElement('td');
+    const td3 = document.createElement('td');
     td1.append(track);
     td2.append(trains);
-    tr.append(name, td1, td2);
+    const ride = document.createElement('button');
+    ride.type = 'button';
+    ride.textContent = '乗る';
+    ride.setAttribute('aria-label', `${line.name} の運転席に乗る`);
+    ride.addEventListener('click', () => {
+      if (!trains.checked) trains.click();
+      enterCab(line);
+    });
+    td3.append(ride);
+    tr.append(name, td1, td2, td3);
     railList.append(tr);
   }
   {
@@ -364,10 +411,49 @@ async function main() {
     const td2 = document.createElement('td');
     td1.append(allTrack);
     td2.append(allTrains);
-    allRow.append(name, td1, td2);
+    allRow.append(name, td1, td2, document.createElement('td'));
     railList.append(allRow);
   }
   bindSlider('train-speed', 'trainSpeed', (v) => v.toFixed(1), (v) => { railways.speed = v; });
+
+  // ------------------------------------------------------------ 運転席からの眺め
+  let cab = null;
+  const cabEye = new THREE.Vector3();
+  const cabTarget = new THREE.Vector3();
+  let cabHudAt = 0;
+  function enterCab(line) {
+    railways.enterCab(line.id, controls.target);
+    cab = { line };
+    flight = null;
+    controls.enabled = false;
+    controls.autoRotate = false;
+    $('auto-rotate').checked = false;
+    $('cab-line').textContent = line.name;
+    $('cab-swatch').style.background = line.color;
+    $('cab').hidden = false;
+    document.body.classList.add('in-cab');
+    camera.fov = 60;
+    camera.updateProjectionMatrix();
+    requestRender();
+  }
+  function exitCab() {
+    if (!cab) return;
+    railways.exitCab();
+    cab = null;
+    $('cab').hidden = true;
+    $('tunnel').hidden = true;
+    document.body.classList.remove('in-cab');
+    camera.fov = 45;
+    camera.updateProjectionMatrix();
+    // 少し後ろの上空へ引いて、乗っていた電車を見下ろす
+    const back = cabEye.clone().sub(cabTarget).setY(0).normalize();
+    const pos = cabEye.clone().addScaledVector(back, 1.2).add(new THREE.Vector3(0, 0.6, 0));
+    flyToPose({ pos, target: cabEye.clone() });
+  }
+  $('cab-exit').addEventListener('click', exitCab);
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') exitCab();
+  });
 
   $('auto-rotate').addEventListener('change', (e) => {
     controls.autoRotate = e.target.checked;
@@ -432,8 +518,35 @@ async function main() {
   });
 
   const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+  let lastNow = performance.now();
+  // 近くを見ているときは手前の描画範囲 (near) を小さくして、地面や電車が欠けないようにする
+  function updateNear(dist) {
+    const near = THREE.MathUtils.clamp(dist * 0.004, 0.0005, 0.05);
+    if (Math.abs(near - camera.near) / camera.near > 0.1) {
+      camera.near = near;
+      camera.updateProjectionMatrix();
+    }
+  }
   function frame(now) {
     requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (now - lastNow) / 1000);
+    lastNow = now;
+    if (cab) {
+      railways.update(dt, camera, renderer.domElement.clientHeight);
+      const info = railways.cabView(cabEye, cabTarget);
+      camera.position.copy(cabEye);
+      camera.lookAt(cabTarget);
+      if ($('tunnel').hidden === info.tunnel) $('tunnel').hidden = !info.tunnel;
+      updateNear(0.01);
+      if (now - cabHudAt > 250) {
+        $('cab-speed').textContent = Math.round(info.kmh).toString();
+        if ($('cab-status').textContent !== info.status) $('cab-status').textContent = info.status;
+        cabHudAt = now;
+      }
+      renderer.render(scene, camera);
+      labels.update(renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+      return;
+    }
     if (flight) {
       const t = Math.min(1, (now - flight.t0) / flight.dur);
       const k = ease(t);
@@ -452,7 +565,8 @@ async function main() {
       needsRender = true;
     }
     if (controls.autoRotate) needsRender = true;
-    if (railways.update(now / 1000, camera, renderer.domElement.clientHeight)) needsRender = true;
+    if (railways.update(dt, camera, renderer.domElement.clientHeight)) needsRender = true;
+    updateNear(camera.position.distanceTo(controls.target));
     if (!needsRender) return;
     needsRender = false;
     renderer.render(scene, camera);

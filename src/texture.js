@@ -1,5 +1,6 @@
 // 地形に貼る色テクスチャを Canvas に描く。
-// 標高の段彩 → 湖 → 河川 → 県外の減光 → 市町村界 → 県境 の順に重ねる。
+// 標高の段彩 → 湖 → 河川 → 富士山が見える場所 → 県外の減光 → 市町村界 → 県境 の順に重ねる。
+
 
 export const COLOR_STOPS = [
   [0, '#3f7f4f'],
@@ -32,6 +33,28 @@ function buildRamp() {
 
 let rampCache = null;
 let baseCache = null;
+let fujiCache = null;
+
+// 富士山が見える場所のマスクを Canvas にする。見えない場所を暗く、見える場所をわずかに明るく塗る
+function fujiImage({ cols, rows }, mask) {
+  if (fujiCache) return fujiCache;
+  const c = document.createElement('canvas');
+  c.width = cols;
+  c.height = rows;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(cols, rows);
+  for (let i = 0; i < mask.length; i++) {
+    const o = i * 4;
+    if (mask[i]) {
+      img.data[o] = 255; img.data[o + 1] = 236; img.data[o + 2] = 200; img.data[o + 3] = 46;
+    } else {
+      img.data[o] = 12; img.data[o + 1] = 18; img.data[o + 2] = 40; img.data[o + 3] = 150;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  fujiCache = c;
+  return c;
+}
 
 function baseImage({ cols, rows }, terrain, water) {
   if (baseCache) return baseCache;
@@ -72,7 +95,7 @@ function baseImage({ cols, rows }, terrain, water) {
   return baseCache;
 }
 
-export function paintTexture(canvas, { meta, terrain, water, municipalities, rivers, layers, scale }) {
+export function paintTexture(canvas, { meta, terrain, water, fujiView, municipalities, rivers, layers, scale }) {
   const { cols, rows } = meta;
   const W = Math.round(cols * scale);
   const H = Math.round(rows * scale);
@@ -111,6 +134,10 @@ export function paintTexture(canvas, { meta, terrain, water, municipalities, riv
       f.geometry.coordinates.forEach(([x, y], i) => (i ? ctx.lineTo(px(x), py(y)) : ctx.moveTo(px(x), py(y))));
       ctx.stroke();
     }
+  }
+
+  if (layers.fujiView && fujiView) {
+    ctx.drawImage(fujiImage(meta, fujiView), 0, 0, W, H);
   }
 
   const tmp = document.createElement('canvas');

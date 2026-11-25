@@ -294,6 +294,141 @@ input[type='checkbox'] {
   text-shadow: none;
 }
 
+/* ---------------------------------------------------------------- 富士山が見える場所 */
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 2px;
+}
+
+.swatch.fuji {
+  background: linear-gradient(90deg, #f3e7d0 50%, #2a3047 50%);
+  outline: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.check.with-note {
+  flex-wrap: wrap;
+}
+
+.check .note {
+  flex-basis: 100%;
+  margin-left: 21px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tunnel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(40, 32, 20, 0.92) 0%, rgba(5, 5, 8, 0.98) 70%);
+  color: rgba(255, 214, 150, 0.85);
+  font-size: 15px;
+  letter-spacing: 0.3em;
+  transition: opacity 0.25s;
+}
+
+.tunnel[hidden] {
+  display: flex;
+  opacity: 0;
+}
+
+.info .fuji {
+  margin-top: 4px;
+}
+
+.info .fuji.yes {
+  color: #ffb08f;
+}
+
+.info .actions {
+  margin-top: 8px;
+}
+
+.info .actions button,
+.rail-table button,
+#cab-exit {
+  appearance: none;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.info .actions button:hover,
+.rail-table button:hover,
+#cab-exit:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent);
+}
+
+.rail-table button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- 運転席からの眺め */
+.cab {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 10px 8px 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.cab[hidden] {
+  display: none;
+}
+
+.cab-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cab-status {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cab-speed output {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.cab-speed small {
+  margin-left: 3px;
+  color: var(--muted);
+}
+
+body.in-cab #panel,
+body.in-cab #panel-toggle,
+body.in-cab #info {
+  display: none;
+}
+
 /* ---------------------------------------------------------------- 地点情報 */
 .info {
   position: absolute;
@@ -376,6 +511,12 @@ input[type='checkbox'] {
 
 /* ---------------------------------------------------------------- スマホ */
 @media (max-width: 720px) {
+  .cab {
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    gap: 10px;
+    font-size: 12px;
+  }
+
   #panel-toggle {
     display: block;
   }
