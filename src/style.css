@@ -405,6 +405,44 @@ input[type='checkbox'] {
   gap: 6px;
 }
 
+.cab-hint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(10, 16, 24, 0.55);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 0.2s;
+}
+
+.cab-hint.flash {
+  color: var(--accent);
+}
+
+@media (pointer: coarse) {
+  .cab-hint {
+    font-size: 0;
+  }
+
+  .cab-hint::after {
+    content: 'ドラッグで見回す・ピンチでズーム・ダブルタップで正面';
+    font-size: 11px;
+  }
+
+  .cab-hint.flash {
+    font-size: 11px;
+  }
+
+  .cab-hint.flash::after {
+    content: none;
+  }
+}
+
 .cab-status {
   display: block;
   color: var(--muted);
