@@ -189,6 +189,7 @@ const WATER = {
   fillTol: 0.6, // 湖面からこの高さまで水を満たして確かめる (m)
   maxFillRatio: 3, // 満たした範囲が核の何倍を超えたら「水がたまらない」とみなすか
   maxFillExtra: 3000, // 核が小さいときに許す増分 (セル数)
+  minLevel: 10, // これより低い水平な土地は海沿いの低地とみなす (海は標高 0 m の色で表示している)
 };
 
 function detectWater({ cols, rows, heights }, report = []) {
@@ -280,6 +281,11 @@ function detectWater({ cols, rows, heights }, report = []) {
     if (cells.length < WATER.minCells) continue;
     const core = stats(cells);
     if (core.sd > WATER.maxSd) continue;
+    if (core.height < WATER.minLevel) {
+      for (const i of cells) seen[i] = 1;
+      rejected.push({ ...core, method: '除外 (海沿いの低地)', name: '' });
+      continue;
+    }
     // 水平な部分を核として、湖面の高さ (+ fillTol) まで水を満たす。
     // 湖ならほぼ核の範囲にとどまり、平野ならあふれて広がるので除外する
     const lv = core.height;
