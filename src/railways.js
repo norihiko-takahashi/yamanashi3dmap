@@ -3,6 +3,7 @@ import { Line2 } from 'three/addons/lines/Line2.js';
 import { LineGeometry } from 'three/addons/lines/LineGeometry.js';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { fitProfile } from './profile.js';
 
 const SAMPLE_KM = 0.04; // 線路を地表に沿わせるための点の間隔
 const LIFT_KM = 0.006; // 地表から少し浮かせて、地形に埋もれないようにする
@@ -305,21 +306,9 @@ export class Railways {
       for (let k = Math.max(0, i - W); k <= Math.min(n - 1, i + W); k++) { s += surface[k]; c++; }
       smooth[i] = s / c;
     }
-    // 勾配を MAX_GRADE 以内に抑える。地表の下側に沿う線 (尾根はトンネルで抜ける) と
-    // 上側に沿う線 (谷は橋で渡る) を作り、その中間を線路の高さにする
-    const lower = Float32Array.from(smooth);
-    const upper = Float32Array.from(smooth);
-    const dh = (i) => (dist[i] - dist[i - 1]) * 1000 * MAX_GRADE; // 区間で許される高低差 (m)
-    for (let i = 1; i < n; i++) {
-      lower[i] = Math.min(lower[i], lower[i - 1] + dh(i));
-      upper[i] = Math.max(upper[i], upper[i - 1] - dh(i));
-    }
-    for (let i = n - 2; i >= 0; i--) {
-      lower[i] = Math.min(lower[i], lower[i + 1] + dh(i + 1));
-      upper[i] = Math.max(upper[i], upper[i + 1] - dh(i + 1));
-    }
-    const h = new Float32Array(n);
-    for (let i = 0; i < n; i++) h[i] = (lower[i] + upper[i]) / 2;
+    // 勾配を MAX_GRADE 以内に保ちながら、地表との高低差が最も小さくなる高さにする。
+    // 急な尾根はトンネル (地中) で抜け、谷は低い橋で渡る
+    const h = fitProfile(smooth, dist, { maxGrade: MAX_GRADE });
     return { n, x: Float32Array.from(xs), z: Float32Array.from(zs), h, surface, dist, length: dist[n - 1] };
   }
 
